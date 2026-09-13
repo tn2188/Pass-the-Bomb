@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Hand Defender - Multiplayer</title>
+    <!-- นำเข้า MediaPipe -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- ใช้ Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #111;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        /* เอฟเฟกต์จอสะเทือน */
+        @keyframes shake {
+            0% { transform: translate(2px, 2px) rotate(0deg); }
+            10% { transform: translate(-2px, -4px) rotate(-1deg); }
+            20% { transform: translate(-6px, 0px) rotate(1deg); }
+            30% { transform: translate(6px, 4px) rotate(0deg); }
+            40% { transform: translate(2px, -2px) rotate(1deg); }
+            50% { transform: translate(-2px, 4px) rotate(-1deg); }
+            60% { transform: translate(-6px, 2px) rotate(0deg); }
+            70% { transform: translate(6px, 2px) rotate(-1deg); }
+            80% { transform: translate(-2px, -2px) rotate(1deg); }
+            90% { transform: translate(2px, 4px) rotate(0deg); }
+            100% { transform: translate(2px, -4px) rotate(-1deg); }
+        }
+        .shake-effect {
+            animation: shake 0.4s;
+        }
+        video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.5;
+        }
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 10;
+            transform: scaleX(-1);
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .overlay-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 30;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            pointer-events: auto;
+        }
+        /* หลอดมานา */
+        #mana-bar-container {
+            width: 200px;
+            height: 10px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        #mana-bar {
+            height: 100%;
+            width: 0%;
+            background: #3b82f6;
+            transition: width 0.2s;
+        }
+        .mana-full {
+            background: #06b6d4 !important;
+            box-shadow: 0 0 10px #06b6d4;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <video id="input-video" autoplay playsinline></video>
+        <canvas id="output-canvas"></canvas>
+
+        <!-- UI ระหว่างเล่นเกม -->
+        <div id="ui-layer">
+            <div class="flex justify-between w-full">
+                <!-- ข้อมูลฝั่งเรา -->
+                <div class="text-2xl font-bold text-white drop-shadow-md">
+                    <div>คะแนน: <span id="score-display">0</span></div>
+                    <div>พลังชีวิต: <span id="health-display">❤️❤️❤️</span></div>
+                    <div id="mana-bar-container">
+                        <div id="mana-bar"></div>
+                    </div>
+                    <div id="mana-text" class="text-xs text-blue-300 mt-1">มานา: 0%</div>
+                    <!-- ✨ AI Commentator Box -->
+                    <div id="ai-commentator-box" class="mt-3 p-2 bg-indigo-950/80 border border-indigo-500/50 rounded-lg max-w-sm text-xs text-indigo-200 backdrop-blur-sm">
+                        🎙️ ผู้บรรยาย AI: ยินดีต้อนรับสู่อารีน่า! เตรียมมือของคุณให้พร้อม...
+                    </div>
+                </div>
+                
+                <!-- บอร์ดคะแนนผู้เล่นหลายคน -->
+                <div class="bg-black/40 p-4 rounded-xl backdrop-blur-sm border border-white/10 min-w-[200px]">
+                    <div id="multiplayer-board">
+                        <div class="text-lg font-bold mb-2 text-gray-300">กำลังเชื่อมต่อออนไลน์...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-center text-white/70 text-sm bg-black/30 p-2 rounded-full mx-auto backdrop-blur-sm">
+                ✋ แบมือ = อุกกาบาต | ✌️ ชู 2 นิ้ว = พายุหิมะ | ✊ กำหมัด (เมื่อมานาเต็ม) = ระเบิดล้างบาง
+            </div>
+        </div>
+
+        <!-- หน้าจอเริ่มเกม -->
+        <div id="start-screen" class="overlay-screen">
+            <h1 class="text-5xl font-bold mb-2 text-cyan-400 drop-shadow-lg text-center">นักเวทย์ปราบปีศาจ<br><span class="text-2xl text-yellow-300">Multiplayer Arena (✨Gemini Powered)</span></h1>
+            <p class="text-sm mb-4 text-cyan-200 font-semibold">ผู้พัฒนา: ด.ญ. ดลใจรัก ยิ่งยอดเยี่ยม ม.3/3 เลขที่ 35</p>
+            <p class="text-base mb-6 text-center max-w-md text-gray-200">
+                แข่งขันเอาชีวิตรอดและรับคำวิเคราะห์ฝีมือจาก ✨Gemini AI!<br><br>
+                ✋ <b>แบมือ</b>: ยิงอุกกาบาต ☄️ | ✌️ <b>ชูสองนิ้ว</b>: พายุหิมะ ❄️ | ✊ <b>กำหมัด</b>: ระเบิด 💥
+            </p>
+            <button id="start-btn" class="px-6 py-3 bg-cyan-600 hover:bg-cyan-500 rounded-full text-xl font-bold transition transform hover:scale-105 shadow-[0_0_15px_rgba(6,182,212,0.5)]">
+                เชื่อมต่อและเริ่มเกม
+            </button>
+            <div id="loading-text" class="mt-4 text-red-400 hidden text-sm"></div>
+        </div>
+
+        <!-- หน้าจอจบเกม -->
+        <div id="game-over-screen" class="overlay-screen hidden">
+            <h1 class="text-6xl font-bold mb-4 text-red-500 drop-shadow-lg">สิ้นชีพ!</h1>
+            <p class="text-2xl mb-2">คะแนนของคุณ: <span id="final-score" class="text-yellow-400 font-bold">0</span></p>
+
+            <!-- ✨ AI Tactical Analysis Box -->
+            <div id="epic-story-box" class="mb-6 p-5 bg-indigo-950/70 border border-indigo-500/50 rounded-xl shadow-lg max-w-xl text-center backdrop-blur-md min-h-[140px] flex flex-col justify-center items-center">
+                <div class="text-xs font-bold text-indigo-300 mb-1">✨ ผลการวิเคราะห์ยุทธวิธีโดย Gemini AI:</div>
+                <p id="epic-story-text" class="text-base italic text-indigo-100 font-serif leading-relaxed">
+                    กำลังประมวลผลข้อมูลการต่อสู้ของคุณ... ✍️✨
+                </p>
+            </div>
+
+            <button id="restart-btn" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-full text-xl font-bold transition transform hover:scale-105">
+                คืนชีพและเล่นอีกครั้ง
+            </button>
+        </div>
+    </div>
+
+    <!-- Firebase & Game Logic -->
+    <script type="module">
+        // --- 1. การตั้งค่า Firebase (ผู้เล่นหลายคน) ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // รับค่า config จากสภาพแวดล้อม
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'magic-hand-game';
+        
+        let currentUser = null;
+
+        // เริ่มต้นการล็อกอิน
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (e) { console.error("Auth Error", e); }
+        }
+        initAuth();
+
+        onAuthStateChanged(auth, user => {
+            currentUser = user;
+            if (user) startMultiplayerSync();
+        });
+
+        // --- 2. ระบบเสียง (Web Audio API) ---
+        let audioCtx;
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+            if (type === 'fire') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.exponentialRampToValueAtTime(100, now + 0.2);
+                gain.gain.setValueAtTime(0.05, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                osc.start(now); osc.stop(now + 0.2);
+            } else if (type === 'snow') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(600, now);
+                gain.gain.setValueAtTime(0.03, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1);
+            } else if (type === 'hit') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.exponentialRampToValueAtTime(10, now + 0.15);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+                osc.start(now); osc.stop(now + 0.15);
+            } else if (type === 'damage') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(60, now);
+                osc.frequency.linearRampToValueAtTime(20, now + 0.4);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.4);
+                osc.start(now); osc.stop(now + 0.4);
+            } else if (type === 'bomb') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(100, now);
+                osc.frequency.exponentialRampToValueAtTime(10, now + 1.5);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 1.5);
+                osc.start(now); osc.stop(now + 1.5);
+            }
+        }
+
+        // --- 3. การจัดการ DOM & ตัวแปรเกม ---
+        const videoElement = document.getElementById('input-video');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const gameContainer = document.getElementById('game-container');
+        
+        let isPlaying = false;
+        let score = 0;
+        let health = 3;
+        let mana = 0;
+        let projectiles = [];
+        let enemies = [];
+        let particles = [];
+        
+        let fireCount = 0;
+        let snowCount = 0;
+        let bombCount = 0;
+        let lastCommentScore = 0;
+
+        let lastFireTime = 0;
+        const FIRE_COOLDOWN = 300; 
+        let lastSnowTime = 0;
+        const SNOW_COOLDOWN = 100;
+        let lastBombTime = 0;
+        const BOMB_COOLDOWN = 2000;
+
+        function resizeCanvas() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- ✨ Gemini API Integration: AI Commentator ---
+        async function fetchAICommentary(currentScore, currentHealth) {
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            const prompt = `ผู้เล่นกำลังเล่นเกมปราบปีศาจ คะแนนปัจจุบันคือ ${currentScore} แต้ม และพลังชีวิตเหลือ ${currentHealth} หัวใจ. ช่วยแต่งประโยคพากย์สถานการณ์สั้นๆ (1 ประโยค) แนวตื่นเต้น กวนๆ หรือเชียร์ผู้เล่นเป็นภาษาไทย`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        systemInstruction: { parts: [{ text: "คุณคือนักพากย์อีสปอร์ตสุดมันส์ พูดภาษาไทยสั้นกระชับและสนุกสนาน" }] }
+                    })
+                });
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                    document.getElementById('ai-commentator-box').innerText = `🎙️ ผู้บรรยาย AI: ${text}`;
+                }
+            } catch (e) {
+                // Ignore background commentary error silently
+            }
+        }
+
+        // --- 4. ระบบ Multiplayer Sync ---
+        function startMultiplayerSync() {
+            const lobbyRef = collection(db, 'artifacts', appId, 'public', 'data', 'multiplayer_lobby');
+            onSnapshot(lobbyRef, (snapshot) => {
+                if (!currentUser) return;
+                const now = Date.now();
+                let html = '<div class="text-sm font-bold mb-2 text-cyan-300">🌐 อารีน่าออนไลน์</div>';
+                let activeCount = 0;
+
+                let players = [];
+                snapshot.forEach(docSnap => players.push({id: docSnap.id, ...docSnap.data()}));
+                players.sort((a, b) => b.score - a.score);
+
+                players.forEach(p => {
+                    if (now - p.lastActive < 15000) {
+                        const isMe = p.id === currentUser.uid;
+                        const status = p.health > 0 ? `❤️ ${p.health}` : '💀 ตาย';
+                        html += `
+                            <div class="text-sm flex justify-between ${isMe ? 'text-yellow-300 font-bold' : 'text-white/80'}">
+                                <span>${p.name}</span>
+                                <span>🏆 ${p.score} | ${status}</span>
+                            </div>
+                        `;
+                        activeCount++;
+                    }
+                });
+
+                if (activeCount === 0) html += '<div class="text-xs text-gray-400">ยังไม่มีผู้เล่นอื่น</div>';
+                document.getElementById('multiplayer-board').innerHTML = html;
+            }, (err) => console.error(err));
+
+            setInterval(() => {
+                if (isPlaying && currentUser) {
+                    const playerRef = doc(db, 'artifacts', appId, 'public', 'data', 'multiplayer_lobby', currentUser.uid);
+                    setDoc(playerRef, {
+                        score: score,
+                        health: health,
+                        mana: mana,
+                        lastActive: Date.now(),
+                        name: 'ดลใจรัก (' + currentUser.uid.substring(0, 4) + ')'
+                    }, {merge: true}).catch(e=>console.error(e));
+                }
+            }, 1000);
+        }
+
+        // --- 5. คลาสวัตถุในเกม ---
+        class Projectile {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                
+                if (this.type === 'fire') {
+                    this.radius = 35;
+                    this.speedY = -12;
+                    this.speedX = (Math.random() - 0.5) * 2;
+                    this.emoji = '☄️';
+                    this.damage = 1.5;
+                } else if (this.type === 'snow') {
+                    this.radius = 20;
+                    this.speedY = -7 - Math.random() * 5;
+                    this.speedX = (Math.random() - 0.5) * 10;
+                    this.emoji = '❄️';
+                    this.damage = 0.5;
+                }
+                this.markedForDeletion = false;
+            }
+            update() {
+                this.y += this.speedY;
+                this.x += this.speedX;
+                if (this.y < -50 || this.x < -50 || this.x > canvasElement.width + 50) this.markedForDeletion = true;
+            }
+            draw(ctx) {
+                ctx.font = `${this.radius * 2}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.scale(-1, 1);
+                ctx.fillText(this.emoji, 0, 0);
+                ctx.restore();
+            }
+        }
+
+        class Enemy {
+            constructor() {
+                this.radius = 30 + Math.random() * 25;
+                this.x = this.radius + Math.random() * (canvasElement.width - this.radius * 2);
+                this.y = -100;
+                this.speed = 1.5 + Math.random() * 2 + (score * 0.04);
+                this.hp = this.radius > 45 ? 4 : 1; 
+                this.emoji = this.hp > 1 ? '👹' : '👾';
+                this.markedForDeletion = false;
+            }
+            update() {
+                this.y += this.speed;
+                if (this.y > canvasElement.height + 50) {
+                    this.markedForDeletion = true;
+                    takeDamage();
+                }
+            }
+            draw(ctx) {
+                ctx.font = `${this.radius * 2}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.scale(-1, 1);
+                ctx.fillText(this.emoji, 0, 0);
+                
+                if (this.hp > 1) {
+                    ctx.fillStyle = 'red';
+                    ctx.fillRect(-20, -this.radius - 10, 40, 5);
+                    ctx.fillStyle = '#0f0';
+                    ctx.fillRect(-20, -this.radius - 10, 40 * (this.hp / 4), 5);
+                }
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, colorType = 'fire') {
+                this.x = x;
+                this.y = y;
+                this.speedX = (Math.random() - 0.5) * 15;
+                this.speedY = (Math.random() - 0.5) * 15;
+                this.size = Math.random() * 10 + 5;
+                this.life = 1.0;
+                if(colorType === 'fire') {
+                    this.color = `hsl(${Math.random() * 40 + 10}, 100%, 50%)`;
+                } else {
+                    this.color = `hsl(${Math.random() * 40 + 180}, 100%, 70%)`;
+                }
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life -= 0.03;
+            }
+            draw(ctx) {
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        // --- 6. ระบบหลัก ---
+        function takeDamage() {
+            if (!isPlaying) return;
+            health--;
+            playSound('damage');
+            
+            gameContainer.classList.add('shake-effect');
+            setTimeout(() => gameContainer.classList.remove('shake-effect'), 400);
+            
+            document.body.style.backgroundColor = 'rgba(255,0,0,0.5)';
+            setTimeout(() => document.body.style.backgroundColor = '#111', 150);
+            
+            updateHUD();
+            if (health <= 0) endGame();
+        }
+
+        function addMana(amount) {
+            mana = Math.min(100, mana + amount);
+            updateHUD();
+        }
+
+        function triggerUltimateBomb() {
+            if (mana < 100) return;
+            mana = 0;
+            bombCount++;
+            playSound('bomb');
+            
+            document.body.style.backgroundColor = 'white';
+            setTimeout(() => document.body.style.backgroundColor = '#111', 200);
+            gameContainer.classList.add('shake-effect');
+            setTimeout(() => gameContainer.classList.remove('shake-effect'), 500);
+
+            for(let i=0; i<100; i++) {
+                particles.push(new Particle(canvasElement.width/2, canvasElement.height/2, 'bomb'));
+            }
+
+            enemies.forEach(enemy => {
+                score += enemy.radius > 45 ? 5 : 1;
+                for(let i=0; i<15; i++) particles.push(new Particle(enemy.x, enemy.y, 'bomb'));
+            });
+            enemies = [];
+            updateHUD();
+        }
+
+        function updateHUD() {
+            document.getElementById('score-display').innerText = score;
+            let heartStr = '';
+            for(let i=0; i<health; i++) heartStr += '❤️';
+            document.getElementById('health-display').innerText = heartStr;
+
+            const manaBar = document.getElementById('mana-bar');
+            manaBar.style.width = `${mana}%`;
+            document.getElementById('mana-text').innerText = `มานา: ${Math.floor(mana)}%`;
+            if(mana >= 100) {
+                manaBar.classList.add('mana-full');
+                document.getElementById('mana-text').innerText = `มานา: 100% (กำหมัดใช้ไม้ตาย!)`;
+                document.getElementById('mana-text').classList.replace('text-blue-300', 'text-cyan-300');
+            } else {
+                manaBar.classList.remove('mana-full');
+                document.getElementById('mana-text').classList.replace('text-cyan-300', 'text-blue-300');
+            }
+
+            if (score - lastCommentScore >= 12 && score > 0) {
+                lastCommentScore = score;
+                fetchAICommentary(score, health);
+            }
+        }
+
+        function checkCollisions() {
+            enemies.forEach(enemy => {
+                projectiles.forEach(projectile => {
+                    const dx = enemy.x - projectile.x;
+                    const dy = enemy.y - projectile.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < enemy.radius + projectile.radius) {
+                        projectile.markedForDeletion = true;
+                        enemy.hp -= projectile.damage;
+                        playSound('hit');
+
+                        if (enemy.hp <= 0) {
+                            enemy.markedForDeletion = true;
+                            score += enemy.radius > 45 ? 5 : 1;
+                            addMana(enemy.radius > 45 ? 15 : 5);
+                            for(let i=0; i<10; i++) particles.push(new Particle(enemy.x, enemy.y));
+                            updateHUD();
+                        }
+                    }
+                });
+            });
+        }
+
+        // --- 7. MediaPipe ตรวจจับมือ ---
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        function detectGesture(landmarks) {
+            const isFingerExtended = (tip, pip) => landmarks[tip].y < landmarks[pip].y;
+            
+            const indexEx = isFingerExtended(8, 6);
+            const middleEx = isFingerExtended(12, 10);
+            const ringEx = isFingerExtended(16, 14);
+            const pinkyEx = isFingerExtended(20, 18);
+
+            if (indexEx && middleEx && ringEx && pinkyEx) return 'OPEN_HAND';
+            if (indexEx && middleEx && !ringEx && !pinkyEx) return 'PEACE_SIGN';
+            if (!indexEx && !middleEx && !ringEx && !pinkyEx) return 'FIST';
+            
+            return 'NONE';
+        }
+
+        hands.onResults((results) => {
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            if (!isPlaying) return;
+
+            const now = Date.now();
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(0, 255, 255, 0.5)', lineWidth: 2});
+                    drawLandmarks(canvasCtx, landmarks, {color: 'rgba(255, 255, 255, 0.7)', lineWidth: 1, radius: 2});
+
+                    const gesture = detectGesture(landmarks);
+                    const handX = landmarks[9].x * canvasElement.width;
+                    const handY = landmarks[9].y * canvasElement.height;
+
+                    if (gesture === 'OPEN_HAND' && now - lastFireTime > FIRE_COOLDOWN) {
+                        projectiles.push(new Projectile(handX, handY, 'fire'));
+                        fireCount++;
+                        playSound('fire');
+                        lastFireTime = now;
+                    } else if (gesture === 'PEACE_SIGN' && now - lastSnowTime > SNOW_COOLDOWN) {
+                        projectiles.push(new Projectile(handX, handY, 'snow'));
+                        projectiles.push(new Projectile(handX, handY, 'snow'));
+                        snowCount++;
+                        playSound('snow');
+                        lastSnowTime = now;
+                    } else if (gesture === 'FIST' && mana >= 100 && now - lastBombTime > BOMB_COOLDOWN) {
+                        triggerUltimateBomb();
+                        lastBombTime = now;
+                    }
+                }
+            }
+
+            if (Math.random() < 0.025 + (score * 0.0006)) enemies.push(new Enemy());
+
+            projectiles.forEach(p => { p.update(); p.draw(canvasCtx); });
+            projectiles = projectiles.filter(p => !p.markedForDeletion);
+
+            enemies.forEach(e => { e.update(); e.draw(canvasCtx); });
+            enemies = enemies.filter(e => !e.markedForDeletion);
+            
+            particles.forEach(p => { p.update(); p.draw(canvasCtx); });
+            particles = particles.filter(p => p.life > 0);
+
+            checkCollisions();
+        });
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+
+        // --- 8. เริ่มและจบเกม (กดปุ่มแล้วเข้าเกมทันทีโดยใช้กล้องเบื้องหลัง) ---
+        camera.start().then(() => {
+            // ซ่อนข้อความโหลดเริ่มต้นเมื่อกล้องพร้อม
+        }).catch(err => {
+            console.warn("Camera auto-start warning:", err);
+        });
+
+        document.getElementById('start-btn').addEventListener('click', () => {
+            initAudio();
+            document.getElementById('start-screen').classList.add('hidden');
+            resetGame();
+        });
+
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            document.getElementById('game-over-screen').classList.add('hidden');
+            resetGame();
+        });
+
+        function resetGame() {
+            score = 0;
+            health = 3;
+            mana = 0;
+            fireCount = 0;
+            snowCount = 0;
+            bombCount = 0;
+            lastCommentScore = 0;
+            projectiles = [];
+            enemies = [];
+            particles = [];
+            updateHUD();
+            isPlaying = true;
+            document.getElementById('ai-commentator-box').innerText = "🎙️ ผู้บรรยาย AI: การต่อสู้เริ่มต้นขึ้นแล้ว ลุยเลย!";
+            document.getElementById('epic-story-text').innerText = "กำลังประมวลผลข้อมูลการต่อสู้ของคุณ... ✍️✨";
+        }
+
+        // --- ✨ Gemini API Integration: Post-Game Tactical Analysis ---
+        async function generateGeminiTacticalAnalysis(finalScore) {
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            const prompt = `ผู้เล่นเล่นเกมเวทมนตร์ปราบปีศาจ สถิติการต่อสู้:
+- คะแนนรวม: ${finalScore}
+- ยิงอุกกาบาต (แบมือ): ${fireCount} ครั้ง
+- ปล่อยพายุหิมะ (ชูสองนิ้ว): ${snowCount} ครั้ง
+- ใช้ท่าไม้ตายระเบิด (กำหมัด): ${bombCount} ครั้ง
+
+ช่วยเขียนวิเคราะห์สไตล์การเล่นและตั้งฉายานักเวทย์สุดเท่ พร้อมคำแนะนำสั้นๆ เพื่อพัฒนาฝีมือ (ความยาวรวม 3-4 ประโยค เป็นภาษาไทยที่คมคายและสนุกสนาน)`;
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ parts: [{ text: prompt }] }],
+                        systemInstruction: { parts: [{ text: "คุณคือนักปราชญ์และผู้เชี่ยวชาญด้านเวทมนตร์ผู้ตรวจประเมินเหล่านักเวทย์" }] }
+                    })
+                });
+                const result = await response.json();
+                const analysis = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (analysis) {
+                    document.getElementById('epic-story-text').innerText = `"${analysis}"`;
+                } else {
+                    document.getElementById('epic-story-text').innerText = `"ท่านต่อสู้ได้อย่างกล้าหาญและสร้างตำนานบทใหม่ในอารีน่าแห่งนี้!"`;
+                }
+            } catch (error) {
+                document.getElementById('epic-story-text').innerText = "เหล่านักกวีไม่สามารถวิเคราะห์ข้อมูลได้ (เกิดข้อผิดพลาดในการเชื่อมต่อ)";
+            }
+        }
+
+        function endGame() {
+            isPlaying = false;
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            
+            if (currentUser) {
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'multiplayer_lobby', currentUser.uid), 
+                    { health: 0, score: score, lastActive: Date.now() }, {merge: true});
+            }
+            
+            generateGeminiTacticalAnalysis(score);
+        }
+    </script>
+</body>
+</html>
